@@ -32,11 +32,8 @@ class LLaMA:
         #print(prompt_tokens)
         answer_tokens = [self.tokenizer.encode(x, bos=False, eos=True) for x in prompt_answers]
         expanded_tokens = []
-        linear_answer_tokens = []
         for i, tok in enumerate(prompt_tokens):
             expanded_tokens.append(tok+answer_tokens[i])
-            linear_answer_tokens.extend(answer_tokens[i])
-        next_token_list = linear_answer_tokens.cuda()
 
         min_prompt_size = min([len(t) for t in prompt_tokens])
         max_prompt_size = max([len(t) for t in prompt_tokens])
@@ -59,38 +56,24 @@ class LLaMA:
         #print(len(expanded_tokens))
         input_text_mask_with_answer = tokens_with_answer != self.tokenizer.pad_id
 
-        zero_dummy = torch.zeros(input_text_mask_with_answer.shape[0]).cuda()
 
-        logits = self.model.forward(tokens_with_answer[:, :max_tokens_with_answer], 0)
+        print("max ",max_tokens_with_answer)
+        print("shape? ", tokens_with_answer.shape)
+        #logits = self.model.forward(tokens_with_answer[:, :max_tokens_with_answer], 0)
+        max_process = 64
+        logit_array = []
+        for i in range(max_tokens_with_answer//max_process):
+            max_index = min((i+1)*max_process, max_tokens_with_answer)
+            logit_array.append(self.model.forward(tokens_with_answer[:, i*max_process:max_index], i*max_process))
+            print("done ",i*max_process)
+        logits = torch.cat(logit_array, dim=1)
         print(logits.shape)
 
-        if temperature > 0:
-            ls = []
-            for i in range(len(expanded_tokens)):
-                        if cur_pos < len(expanded_tokens[i]):
-                            ls.append(expanded_tokens[i][cur_pos])
-                        else:
-                            ls.append(0)
-
-                probs = F.log_softmax(logits / temperature, dim=-1)
-                token_prob = probs[torch.arange(probs.size(0)), ls]
-                
-                token_prob = torch.where(input_text_mask_with_answer[:,cur_pos], token_prob, zero_dummy)
-                
-                result_prob = torch.add(result_prob, token_prob)
-                
-                next_token = torch.tensor(ls).cuda()
-            else:
-                next_token = torch.argmax(logits, dim=-1)
-            next_token = next_token.reshape(-1)
-            # only replace token if prompt has already been generated
-            next_token = torch.where(
-                input_text_mask[:, cur_pos], tokens[:, cur_pos], next_token
-            )
-            tokens[:, cur_pos] = next_token
-            #print(tokens[:,cur_pos-2:cur_pos+2])
-            prev_pos = cur_pos
-        
+        probs = F.log_softmax(logits / temperature, dim=-1)
+        for i in range(len(expanded_tokens)):
+            probs_for_token = probs[i,max_tokens_with_answer*i:max_tokens_with_answer*(i+1),:]
+            mask = torch.arange(len(prompt_tokens[i]),len(expanded_tokens[i]))
+            result_prob[i] = probs_for_token[mask,answer_tokens[i]].sum()
         return result_prob
 
 

@@ -170,8 +170,16 @@ cheese =>""",
         gen_small = []
         #with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
         #    with record_function("model_inference"):
+        question_for_gen = []
+        answer_for_gen = []
+        for j in range(max_batch_size):
+            question_for_gen.append(question_lines[i*max_batch_size+j])
+            question_for_gen.append(question_lines[i*max_batch_size+j])
+            question_for_gen.append(question_lines[i*max_batch_size+j])
+            question_for_gen.append(question_lines[i*max_batch_size+j])
+            answer_for_gen.extend(answer_lines[i*max_batch_size+j][:])
         gen_small = generator.generate(
-            question_lines[i*max_batch_size:(i+1)*max_batch_size], answer_lines[i*max_batch_size:(i+1)*max_batch_size][:], max_gen_len=256, temperature=temperature, top_p=top_p
+            question_for_gen, answer_for_gen, max_gen_len=256, temperature=temperature, top_p=top_p
         )
         #print(prof.key_averages().table(sort_by="cpu_time_total",row_limit=20))
         print(gen_small)
