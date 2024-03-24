@@ -19,7 +19,7 @@ class LLaMA:
     def generate(
         self,
         prompts: List[str],
-        prompt_answers: List[List[str]], # L * 4
+        prompt_answers: List[str], # L * 4
         max_gen_len: int,
         temperature: float = 0.8,
         top_p: float = 0.95,
@@ -30,13 +30,13 @@ class LLaMA:
 
         prompt_tokens = [self.tokenizer.encode(x, bos=True, eos=False) for x in prompts]
         #print(prompt_tokens)
-        answer_tokens = [[self.tokenizer.encode(x, bos=False, eos=True) for x in one_question] for one_question in prompt_answers]
+        answer_tokens = [self.tokenizer.encode(x, bos=False, eos=True) for x in prompt_answers]
         expanded_tokens = []
-        with record_function("make_token"):
-            for i, tok in enumerate(prompt_tokens):
-                for j in range(4):
-                    expanded_tokens.append(tok+answer_tokens[i][j])
-        #print(expanded_tokens)
+        linear_answer_tokens = []
+        for i, tok in enumerate(prompt_tokens):
+            expanded_tokens.append(tok+answer_tokens[i])
+            linear_answer_tokens.extend(answer_tokens[i])
+        next_token_list = linear_answer_tokens.cuda()
 
         min_prompt_size = min([len(t) for t in prompt_tokens])
         max_prompt_size = max([len(t) for t in prompt_tokens])
@@ -45,43 +45,28 @@ class LLaMA:
 
         total_len = min(params.max_seq_len, max_gen_len + max_prompt_size)
 
-        result_prob = torch.zeros(len(prompt_tokens)*4).cuda()
-        tokens = torch.full((bsz, total_len), self.tokenizer.pad_id).cuda().long()
+        result_prob = torch.zeros(len(prompt_tokens)).cuda()
         tokens_with_answer = torch.full((bsz, total_len), self.tokenizer.pad_id).cuda().long()
-        tokens_with_answer = tokens_with_answer.repeat(4,1)
-        with record_function("make_token2"):
-            for k, t in enumerate(prompt_tokens):
-                tokens[k, : len(t)] = torch.tensor(t).long()
-            for k, t in enumerate(expanded_tokens):
-                tokens_with_answer[k, : len(t)] = torch.tensor(t).long()
+        max_tokens_with_answer = 0
+        for k, t in enumerate(expanded_tokens):
+            tokens_with_answer[k, : len(t)] = torch.tensor(t).long()
+            if max_tokens_with_answer < len(t):
+                max_tokens_with_answer = len(t)
+
         ##
         #print(tokens.shape)
-        tokens = tokens.repeat_interleave(repeats=4, dim=0)
+        #tokens = tokens.repeat_interleave(repeats=4, dim=0)
         #print(len(expanded_tokens))
-        tokens = tokens[:16,:]
-        expanded_tokens = expanded_tokens[:16]
-
-        tokens_with_answer = tokens_with_answer[:16,:]
-
-        input_text_mask = tokens != self.tokenizer.pad_id
         input_text_mask_with_answer = tokens_with_answer != self.tokenizer.pad_id
-
-        start_pos = min_prompt_size
-        prev_pos = 0
 
         zero_dummy = torch.zeros(input_text_mask_with_answer.shape[0]).cuda()
 
-        for cur_pos in range(start_pos, total_len):
-            with record_function("forward_real_Model"):
-                logits = self.model.forward(tokens[:, prev_pos:cur_pos], prev_pos)
-                print(logits.shape)
-            if temperature > 0:
-                # next_token = sample_top_p(probs, top_p)
-                #print(probs.shape)
-          
-                ls = []
-                with record_function("append_token"):
-                    for i in range(len(expanded_tokens)):
+        logits = self.model.forward(tokens_with_answer[:, :max_tokens_with_answer], 0)
+        print(logits.shape)
+
+        if temperature > 0:
+            ls = []
+            for i in range(len(expanded_tokens)):
                         if cur_pos < len(expanded_tokens[i]):
                             ls.append(expanded_tokens[i][cur_pos])
                         else:
@@ -94,12 +79,6 @@ class LLaMA:
                 
                 result_prob = torch.add(result_prob, token_prob)
                 
-                #print(input_text_mask_with_answer[:,cur_pos])
-                #print(token_prob)
-                #print(result_prob)
-                if not torch.is_nonzero(torch.count_nonzero(token_prob)):
-                    break
-
                 next_token = torch.tensor(ls).cuda()
             else:
                 next_token = torch.argmax(logits, dim=-1)
@@ -111,25 +90,8 @@ class LLaMA:
             tokens[:, cur_pos] = next_token
             #print(tokens[:,cur_pos-2:cur_pos+2])
             prev_pos = cur_pos
-
-        '''
-        decoded = []
-        for i, t in enumerate(tokens.tolist()):
-            # cut to max gen len
-            t = t[: len(prompt_tokens[i]) + max_gen_len]
-            # cut to eos tok if any
-            try:
-                t = t[: t.index(self.tokenizer.eos_id)]
-            except ValueError:
-                pass
-            decoded.append(self.tokenizer.decode(t))
-    
-        return decoded
-        '''
         
         return result_prob
-        #result = torch.argmax(result_prob.reshape((-1,4)), dim=1)
-        #return result
 
 
 

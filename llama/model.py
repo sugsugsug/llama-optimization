@@ -236,6 +236,5 @@ class Transformer(nn.Module):
         h = self.norm(h)
         #print("pre ",h.shape)
         #output = self.output(h[:, -1, :])  # only compute last logits
-        print("post ",self.output(h).shape)
         output = self.output(h[:, :, :])  
         return output.float()
