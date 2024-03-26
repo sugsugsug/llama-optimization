@@ -124,7 +124,7 @@ def main(
         sys.stdout = open(os.devnull, "w")
 
     generator = load(
-        ckpt_dir, tokenizer_path, local_rank, world_size, max_seq_len, 16#max_batch_size
+        ckpt_dir, tokenizer_path, local_rank, world_size, max_seq_len, max_batch_size
     )
 
     prompts = [
@@ -170,14 +170,14 @@ cheese =>""",
         gen_small = []
         #with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
         #    with record_function("model_inference"):
-        question_for_gen = []
-        answer_for_gen = []
         for j in range(max_batch_size):
+            question_for_gen = []
+            answer_for_gen = []
             question_for_gen.append(question_lines[i*max_batch_size+j])
             question_for_gen.append(question_lines[i*max_batch_size+j])
             question_for_gen.append(question_lines[i*max_batch_size+j])
             question_for_gen.append(question_lines[i*max_batch_size+j])
-            answer_for_gen.extend(answer_lines[i*max_batch_size+j][:])
+            answer_for_gen.extend(answer_lines[i*max_batch_size+j][:4])
         gen_small = generator.generate(
             question_for_gen, answer_for_gen, max_gen_len=256, temperature=temperature, top_p=top_p
         )

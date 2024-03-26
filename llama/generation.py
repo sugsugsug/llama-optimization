@@ -43,7 +43,7 @@ class LLaMA:
         total_len = min(params.max_seq_len, max_gen_len + max_prompt_size)
 
         result_prob = torch.zeros(len(prompt_tokens)).cuda()
-        tokens_with_answer = torch.full((bsz, total_len), self.tokenizer.pad_id).cuda().long()
+        tokens_with_answer = torch.full((bsz, total_len), 0).cuda().long()
         max_tokens_with_answer = 0
         for k, t in enumerate(expanded_tokens):
             tokens_with_answer[k, : len(t)] = torch.tensor(t).long()
@@ -60,11 +60,14 @@ class LLaMA:
         print("max ",max_tokens_with_answer)
         print("shape? ", tokens_with_answer.shape)
         #logits = self.model.forward(tokens_with_answer[:, :max_tokens_with_answer], 0)
-        max_process = 64
+        max_process = 4
         logit_array = []
         for i in range(max_tokens_with_answer//max_process):
             max_index = min((i+1)*max_process, max_tokens_with_answer)
-            logit_array.append(self.model.forward(tokens_with_answer[:, i*max_process:max_index], i*max_process))
+            print("before: ",tokens_with_answer[:,i*max_process:max_index].shape)
+            small_logits = self.model.forward(tokens_with_answer[:, i*max_process:max_index], i*max_process)
+            #logit_array.append(small_logits)
+            print("small ", small_logits.shape)
             print("done ",i*max_process)
         logits = torch.cat(logit_array, dim=1)
         print(logits.shape)
