@@ -139,7 +139,6 @@ class Attention(nn.Module):
         keys = keys.transpose(1, 2)
         values = values.transpose(1, 2)
         scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
-        print("HH ",scores.shape)
         if mask is not None:
             scores = scores + mask  # (bs, n_local_heads, slen, cache_len + slen)
         scores = F.softmax(scores.float(), dim=-1).type_as(xq)
@@ -191,12 +190,6 @@ class TransformerBlock(nn.Module):
         self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
 
     def forward(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor]):
-        """
-        if mask is not None:
-            print("Yo ",x.shape,self.attention_norm(x).shape,start_pos,freqs_cis.shape,mask.shape)
-        else:
-            print("Yu ",x.shape,self.attention_norm(x).shape,start_pos,freqs_cis.shape)
-        """
         h = x + self.attention.forward(self.attention_norm(x), start_pos, freqs_cis, mask)
         out = h + self.feed_forward.forward(self.ffn_norm(h))
         return out

@@ -50,32 +50,16 @@ class LLaMA:
             if max_tokens_with_answer < len(t):
                 max_tokens_with_answer = len(t)
 
-        ##
-        #print(tokens.shape)
-        #tokens = tokens.repeat_interleave(repeats=4, dim=0)
-        #print(len(expanded_tokens))
         input_text_mask_with_answer = tokens_with_answer != self.tokenizer.pad_id
 
 
-        print("max ",max_tokens_with_answer)
-        print("shape? ", tokens_with_answer.shape)
-        #logits = self.model.forward(tokens_with_answer[:, :max_tokens_with_answer], 0)
-        max_process = 4
-        logit_array = []
-        for i in range(max_tokens_with_answer//max_process):
-            max_index = min((i+1)*max_process, max_tokens_with_answer)
-            print("before: ",tokens_with_answer[:,i*max_process:max_index].shape)
-            small_logits = self.model.forward(tokens_with_answer[:, i*max_process:max_index], i*max_process)
-            #logit_array.append(small_logits)
-            print("small ", small_logits.shape)
-            print("done ",i*max_process)
-        logits = torch.cat(logit_array, dim=1)
-        print(logits.shape)
+        with record_function("forward"):
+            logits = self.model.forward(tokens_with_answer[:, :max_tokens_with_answer], 0)
 
         probs = F.log_softmax(logits / temperature, dim=-1)
         for i in range(len(expanded_tokens)):
-            probs_for_token = probs[i,max_tokens_with_answer*i:max_tokens_with_answer*(i+1),:]
-            mask = torch.arange(len(prompt_tokens[i]),len(expanded_tokens[i]))
+            probs_for_token = probs[i,:,:]
+            mask = torch.arange(len(prompt_tokens[i])-1,len(expanded_tokens[i])-1)
             result_prob[i] = probs_for_token[mask,answer_tokens[i]].sum()
         return result_prob
 
