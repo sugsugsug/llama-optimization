@@ -70,7 +70,8 @@ with jsonlines.open("hellaswag_val.jsonl") as f:
         real_i = real_i + 1
         print(str(i)+'th input processing..')
 
-new_tuples = sorted(sort_tuples, key=lambda tup: tup[0])
+#new_tuples = sorted(sort_tuples, key=lambda tup: tup[0])
+new_tuples = sort_tuples
 
 
 
@@ -130,7 +131,7 @@ def main(
     temperature: float = 0.8,
     top_p: float = 0.95,
     max_seq_len: int = 512,
-    max_batch_size: int = 8,# 32
+    max_batch_size: int = 1,# 32
 ):
     local_rank, world_size = setup_model_parallel()
     if local_rank > 0:
@@ -179,6 +180,15 @@ cheese =>""",
     results2 = []
     num_batch = math.floor(len(question_lines)*4 / max_batch_size)
     print("HI",num_batch)
+    """
+    prof = torch.profiler.profile(
+        schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
+        on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/sort'),
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=True)
+    prof.start()
+    """
     for i in range(num_batch):
         gen_small = []
         question_for_gen = []
@@ -193,21 +203,20 @@ cheese =>""",
             question_for_gen.append(question)
             answer_for_gen.append(answer)
             num_chr_list.append(num_chr(answer))
-        #with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], profile_memory=True, record_shapes=True) as prof:
-        #    with record_function("model_inference"):
         gen_small = generator.generate(
-            question_for_gen, answer_for_gen, max_gen_len=256, temperature=temperature, top_p=top_p
+            question_for_gen, answer_for_gen, max_gen_len=256, temperature=temperature, top_p=top_p 
         )
-        #print(prof.key_averages().table(sort_by="cuda_time_total",row_limit=20))
+        #prof.step()
         print('chr_list : ', num_chr_list)
 
+        print(gen_small)
         result_small = gen_small.div(torch.tensor(num_chr_list).cuda())
-        print(result_small)
         for j in range(max_batch_size):
             a = i*max_batch_size+j
             result_values[new_tuples[a][1],new_tuples[a][2]] = result_small[j]
         print(str(i)+'th batch processing..')
 
+    #prof.stop()
     results = torch.argmax(result_values[:num_sample,:],dim=1).tolist()
     print(results)
     num_correct = 0
