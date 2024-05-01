@@ -6,7 +6,7 @@ from typing import List
 import torch
 import torch.nn.functional as F
 
-from llama.tokenizer import Tokenizer
+#from llama.tokenizer import Tokenizer
 from llama.model import Transformer
 
 from torch.profiler import record_function
@@ -15,14 +15,14 @@ from torch.profiler import record_function
 class LLaMA:
     ii=0
     cache_tensor=0
-    def __init__(self, model: Transformer, tokenizer: Tokenizer):
+    def __init__(self, model: Transformer):#, tokenizer: Tokenizer):
         self.model = model
-        self.tokenizer = tokenizer
+        #self.tokenizer = tokenizer
 
     def generate(
         self,
-        prompts: List[str],
-        prompt_answers: List[str], # L * 4
+        prompts: List[int],
+        prompt_answers: List[int], # L * 4
         max_gen_len: int,
         temperature: float = 0.8,
         top_p: float = 0.95,
@@ -31,9 +31,8 @@ class LLaMA:
         params = self.model.params
         assert bsz <= params.max_batch_size, (bsz, params.max_batch_size)
 
-        prompt_tokens = [self.tokenizer.encode(x, bos=True, eos=False) for x in prompts]
-        #print(prompt_tokens)
-        answer_tokens = [self.tokenizer.encode(x, bos=False, eos=True) for x in prompt_answers]
+        prompt_tokens = prompts #[self.tokenizer.encode(x, bos=True, eos=False) for x in prompts]
+        answer_tokens = prompt_answers #[self.tokenizer.encode(x, bos=False, eos=True) for x in prompt_answers]
         expanded_tokens = []
         for i, tok in enumerate(prompt_tokens):
             expanded_tokens.append(tok+answer_tokens[i])
@@ -57,18 +56,19 @@ class LLaMA:
         if LLaMA.ii % 4 == 0:
             logits = self.model.forward(tokens_with_answer[:, :max_tokens_with_answer], 0)
         else:
-            logits = self.model.forward(tokens_with_answer[:, len(prompt_tokens[0]):max_tokens_with_answer], len(prompt_tokens[0]))
+            logits = self.model.forward(tokens_with_answer[:, min_prompt_size:max_tokens_with_answer], min_prompt_size)
 
         probs = F.log_softmax(logits / temperature, dim=-1)
         if LLaMA.ii % 4 == 0:
-            LLaMA.cache_tensor = probs[:,len(prompt_tokens[i])-1:len(prompt_tokens[i]),:]
+            LLaMA.cache_tensor = torch.cat([probs[i:(i+1),len(prompt_tokens[i])-1:len(prompt_tokens[i]),:] for i in range(len(expanded_tokens))],dim=0)
         for i in range(len(expanded_tokens)):
             probs_for_token = probs[i,:,:]
             #mask = torch.arange(len(prompt_tokens[i])-1,len(expanded_tokens[i])-1)
             if LLaMA.ii % 4 == 0:
                 mask = torch.arange(len(prompt_tokens[i])-1,len(expanded_tokens[i])-1)
             else:
-                mask = torch.arange(len(answer_tokens[i]))
+                diff = len(prompt_tokens[i]) - min_prompt_size
+                mask = torch.arange(diff, diff+len(answer_tokens[i]))
                 probs_for_token = torch.cat((LLaMA.cache_tensor[i,:,:],probs_for_token[:-1,:]),dim=0)
             result_prob[i] = probs_for_token[mask,answer_tokens[i]].sum()
         LLaMA.ii = LLaMA.ii + 1

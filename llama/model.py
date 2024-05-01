@@ -16,7 +16,6 @@ from fairscale.nn.model_parallel.layers import (
     ColumnParallelLinear,
 )
 
-
 @dataclass
 class ModelArgs:
     dim: int = 512
