@@ -110,10 +110,12 @@ class Attention(nn.Module):
 
         self.cache_k = torch.zeros(
             (args.max_batch_size, args.max_seq_len, self.n_local_heads, self.head_dim)
-        ).cuda()
+        #).cuda()
+        )
         self.cache_v = torch.zeros(
             (args.max_batch_size, args.max_seq_len, self.n_local_heads, self.head_dim)
-        ).cuda()
+        #).cuda()
+        )
 
     def forward(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor]):
         bsz, seqlen, _ = x.shape
@@ -223,6 +225,7 @@ class Transformer(nn.Module):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
+        #print(h.device)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
         mask = None
@@ -231,8 +234,9 @@ class Transformer(nn.Module):
             mask = torch.full((1, 1, seqlen, start_pos+seqlen), float("-inf"), device=tokens.device)
             mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
 
-        for layer in self.layers:
+        for i, layer in enumerate(self.layers):
             h = layer(h, start_pos, freqs_cis, mask)
+            #print(i, h.device)
         h = self.norm(h)
         #print("pre ",h.shape)
         #output = self.output(h[:, -1, :])  # only compute last logits

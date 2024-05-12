@@ -27,7 +27,7 @@ sentences = ["I'm happy", "I'm full of happiness"]
 
 sen_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 
-num_sample = 9996
+num_sample = 120
 
 def num_token(sentence: str):
     return len(sentence.split(' '))
@@ -80,7 +80,7 @@ with jsonlines.open("hellaswag_val.jsonl") as f:
         for j in range(4):
             answers_for_sort.append( (len(answer_token_list[j]), j ))
         sorted_answer_index_list = [ t[1] for t in sorted(answers_for_sort, key=lambda tup: tup[0])]
-        print(sorted_answer_index_list)
+        #print(sorted_answer_index_list)
 
         for j in range(4):
             #sort_tuples.append((num_token_sen + num_token(new_ans_list[j]),real_i,j))
@@ -91,20 +91,17 @@ with jsonlines.open("hellaswag_val.jsonl") as f:
 new_tuples = sorted(sort_tuples, key=lambda tup: tup[0])
 #new_tuples = sort_tuples
 
-
-
 def setup_model_parallel() -> Tuple[int, int]:
     local_rank = int(os.environ.get("LOCAL_RANK", -1))
     world_size = int(os.environ.get("WORLD_SIZE", -1))
 
     torch.distributed.init_process_group("nccl")
     initialize_model_parallel(world_size)
-    torch.cuda.set_device(local_rank)
+    #torch.cuda.set_device(local_rank)
 
     # seed must be the same in all processes
     torch.manual_seed(1)
     return local_rank, world_size
-
 
 def load(
     ckpt_dir: str,
@@ -122,6 +119,7 @@ def load(
     ckpt_path = checkpoints[local_rank]
     print("Loading")
     checkpoint = torch.load(ckpt_path, map_location="cpu")
+    #print([ i.size() for i in checkpoint.values()])
     with open(Path(ckpt_dir) / "params.json", "r") as f:
         params = json.loads(f.read())
 
@@ -130,16 +128,16 @@ def load(
     )
     tokenizer = Tokenizer(model_path=tokenizer_path)
     model_args.vocab_size = tokenizer.n_words
+    print(model_args)
     torch.set_default_tensor_type(torch.cuda.HalfTensor)
     model = Transformer(model_args)
     torch.set_default_tensor_type(torch.FloatTensor)
     model.load_state_dict(checkpoint, strict=False)
+    #print(local_rank, model)
 
     generator = LLaMA(model)
     print(f"Loaded in {time.time() - start_time:.2f} seconds")
     return generator
-
-
 
 def main(
     ckpt_dir: str,
@@ -151,8 +149,10 @@ def main(
 ):
     local_rank, world_size = setup_model_parallel()
     print('hey? ',local_rank)
+    """
     if local_rank > 0:
         sys.stdout = open(os.devnull, "w")
+    """
 
     generator = load(
         ckpt_dir, tokenizer_path, local_rank, world_size, max_seq_len, max_batch_size
@@ -168,7 +168,7 @@ def main(
     """
     prof = torch.profiler.profile(
         schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
-        on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/one_batch'),
+        on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/before_pipeline'),
         record_shapes=True,
         profile_memory=True,
         with_stack=True)
