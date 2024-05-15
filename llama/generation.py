@@ -44,8 +44,8 @@ class LLaMA:
 
         total_len = min(params.max_seq_len, max_gen_len + max_prompt_size)
 
-        result_prob = torch.zeros(len(prompt_tokens)).cuda()
-        tokens_with_answer = torch.full((bsz, total_len), 0).cuda().long()
+        result_prob = torch.zeros(len(prompt_tokens)).to('cuda:3')
+        tokens_with_answer = torch.full((bsz, total_len), 0).to('cuda:0').long()
         max_tokens_with_answer = 0
         for k, t in enumerate(expanded_tokens):
             tokens_with_answer[k, : len(t)] = torch.tensor(t).long()

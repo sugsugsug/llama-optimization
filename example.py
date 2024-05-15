@@ -12,8 +12,6 @@ import math
 
 from pathlib import Path
 
-from fairscale.nn.model_parallel.initialize import initialize_model_parallel
-
 from llama import ModelArgs, Transformer, Tokenizer, LLaMA
 
 import jsonlines
@@ -27,7 +25,7 @@ sentences = ["I'm happy", "I'm full of happiness"]
 
 sen_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 
-num_sample = 120
+num_sample = 9996
 
 def num_token(sentence: str):
     return len(sentence.split(' '))
@@ -50,6 +48,7 @@ result_values = torch.empty((10000, 4), dtype=torch.float32)
 sort_tuples = []
 
 tokenizer_path = '/data/z0/heehoon/llama/llama_pretrained/tokenizer.model'
+tokenizer_path = './tokenizer.model'
 tokenizer = Tokenizer(model_path=tokenizer_path)
 real_i = 0
 num_skip_sample = 0
@@ -91,35 +90,20 @@ with jsonlines.open("hellaswag_val.jsonl") as f:
 new_tuples = sorted(sort_tuples, key=lambda tup: tup[0])
 #new_tuples = sort_tuples
 
-def setup_model_parallel() -> Tuple[int, int]:
-    local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    world_size = int(os.environ.get("WORLD_SIZE", -1))
+torch.manual_seed(1)
 
-    torch.distributed.init_process_group("nccl")
-    initialize_model_parallel(world_size)
-    #torch.cuda.set_device(local_rank)
-
-    # seed must be the same in all processes
-    torch.manual_seed(1)
-    return local_rank, world_size
+num_gpus = 4
 
 def load(
     ckpt_dir: str,
     tokenizer_path: str,
-    local_rank: int,
-    world_size: int,
     max_seq_len: int,
     max_batch_size: int,
 ) -> LLaMA:
     start_time = time.time()
     checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
-    assert world_size == len(
-        checkpoints
-    ), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {world_size}"
-    ckpt_path = checkpoints[local_rank]
     print("Loading")
-    checkpoint = torch.load(ckpt_path, map_location="cpu")
-    #print([ i.size() for i in checkpoint.values()])
+    device = torch.device("cuda")
     with open(Path(ckpt_dir) / "params.json", "r") as f:
         params = json.loads(f.read())
 
@@ -132,7 +116,11 @@ def load(
     torch.set_default_tensor_type(torch.cuda.HalfTensor)
     model = Transformer(model_args)
     torch.set_default_tensor_type(torch.FloatTensor)
-    model.load_state_dict(checkpoint, strict=False)
+    for i, ckpt_path in enumerate(checkpoints):
+        checkpoint = torch.load(ckpt_path, map_location="cpu")
+        model.load_state_dict(checkpoint, strict=False)
+        print(i)
+    #model.to(device)
     #print(local_rank, model)
 
     generator = LLaMA(model)
@@ -147,15 +135,8 @@ def main(
     max_seq_len: int = 512,
     max_batch_size: int = 12,# 32
 ):
-    local_rank, world_size = setup_model_parallel()
-    print('hey? ',local_rank)
-    """
-    if local_rank > 0:
-        sys.stdout = open(os.devnull, "w")
-    """
-
     generator = load(
-        ckpt_dir, tokenizer_path, local_rank, world_size, max_seq_len, max_batch_size
+        ckpt_dir, tokenizer_path, max_seq_len, max_batch_size
     )
 
     print(answer_lines[2])
@@ -202,7 +183,7 @@ def main(
         #print('chr_list : ', num_chr_list)
 
         #print(gen_small)
-        result_small = gen_small.div(torch.tensor(num_chr_list).cuda())
+        result_small = gen_small.div(torch.tensor(num_chr_list).to('cuda:3'))
         for j in range(max_batch_size):
             #a = i*max_batch_size+j
             a = (i//4)*max_batch_size*4 + (i%4)+j*4

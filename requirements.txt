@@ -1,46 +1,46 @@
 absl-py==2.1.0
 astunparse==1.6.3
 attrs==23.2.0
-certifi @ file:///croot/certifi_1707229174982/work/certifi
-charset-normalizer @ file:///tmp/build/80754af9/charset-normalizer_1630003229654/work
+certifi 
+charset-normalizer 
 click==8.1.7
 fairscale==0.4.13
-filelock @ file:///croot/filelock_1700591183607/work
+filelock 
 fire==0.5.0
 flake8==7.0.0
 flatbuffers==24.3.25
 fsspec==2024.2.0
 gast==0.5.4
-gmpy2 @ file:///work/ci_py311/gmpy2_1676839849213/work
+gmpy2 
 google-pasta==0.2.0
 grpcio==1.62.1
 h5py==3.11.0
 huggingface-hub==0.20.3
-idna @ file:///work/ci_py311/idna_1676822698822/work
-Jinja2 @ file:///croot/jinja2_1706733616596/work
+idna 
+Jinja2 
 joblib==1.3.2
 jsonlines==4.0.0
 keras==3.3.3
 libclang==18.1.1
 Markdown==3.6
 markdown-it-py==3.0.0
-MarkupSafe @ file:///croot/markupsafe_1704205993651/work
+MarkupSafe 
 mccabe==0.7.0
 mdurl==0.1.2
-mkl-fft @ file:///croot/mkl_fft_1695058164594/work
-mkl-random @ file:///croot/mkl_random_1695059800811/work
+mkl-fft 
+mkl-random 
 mkl-service==2.4.0
 ml-dtypes==0.3.2
-mpmath @ file:///croot/mpmath_1690848262763/work
+mpmath 
 namex==0.0.8
-networkx @ file:///croot/networkx_1690561992265/work
+networkx 
 nltk==3.8.1
-numpy @ file:///croot/numpy_and_numpy_base_1704311704800/work/dist/numpy-1.26.3-cp311-cp311-linux_x86_64.whl#sha256=10a078151ecec16bafb535f7487635217625fa06536dec8509e514648c78d626
+numpy 
 opt-einsum==3.3.0
 optree==0.11.0
 packaging==23.2
 pandas==2.2.1
-pillow @ file:///croot/pillow_1707233021655/work
+pillow 
 protobuf==4.25.3
 pycodestyle==2.11.1
 pyflakes==3.2.0
@@ -49,7 +49,7 @@ python-dateutil==2.9.0.post0
 pytz==2024.1
 PyYAML==6.0.1
 regex==2023.12.25
-requests @ file:///croot/requests_1707355572290/work
+requests 
 rich==13.7.1
 safetensors==0.4.2
 scikit-learn==1.4.0
@@ -57,7 +57,6 @@ scipy==1.12.0
 sentence-transformers==2.3.1
 sentencepiece==0.1.99
 six==1.16.0
-sympy @ file:///croot/sympy_1701397643339/work
 tensorboard==2.16.2
 tensorboard-data-server==0.7.2
 tensorflow==2.16.1
@@ -72,8 +71,8 @@ torchvision==0.15.2
 tqdm==4.66.2
 transformers==4.37.2
 triton==2.0.0
-typing_extensions @ file:///croot/typing_extensions_1705599297034/work
+typing_extensions 
 tzdata==2024.1
-urllib3 @ file:///croot/urllib3_1700840488771/work
+urllib3 
 Werkzeug==3.0.2
 wrapt==1.16.0

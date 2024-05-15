@@ -77,14 +77,14 @@ class Attention(nn.Module):
         self.wv = nn.Linear(args.dim, args.dim, bias=False)
         self.wo = nn.Linear(args.dim, args.dim, bias=False)
 
-        self.cache_k = torch.zeros(
+        self.cache_k = nn.Parameter(torch.zeros(
             (args.max_batch_size, args.max_seq_len, self.n_local_heads, self.head_dim)
         #).cuda()
-        )
-        self.cache_v = torch.zeros(
+        ))
+        self.cache_v = nn.Parameter(torch.zeros(
             (args.max_batch_size, args.max_seq_len, self.n_local_heads, self.head_dim)
         #).cuda()
-        )
+        ))
 
     def forward(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor]):
         bsz, seqlen, _ = x.shape
@@ -96,8 +96,8 @@ class Attention(nn.Module):
 
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
-        self.cache_k = self.cache_k.to(xq)
-        self.cache_v = self.cache_v.to(xq)
+        #self.cache_k = self.cache_k.to(xq)
+        #self.cache_v = self.cache_v.to(xq)
 
         self.cache_k[:bsz, start_pos : start_pos + seqlen] = xk
         self.cache_v[:bsz, start_pos : start_pos + seqlen] = xv
@@ -166,7 +166,7 @@ class Transformer(nn.Module):
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
 
-        self.tok_embeddings = nn.Linear(params.vocab_size, params.dim, bias=False).to('cuda:0')
+        self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim).to('cuda:0')
 
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers//4):
@@ -189,8 +189,7 @@ class Transformer(nn.Module):
     def forward(self, tokens: torch.Tensor, start_pos: int):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
-        self.freqs_cis = self.freqs_cis#.to(h.device)
-        #print(h.device)
+        self.freqs_cis = self.freqs_cis.to(h.device)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
         mask = None
@@ -200,10 +199,13 @@ class Transformer(nn.Module):
             mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
 
         for i, layer in enumerate(self.layers):
-            if i != 0 and i % (self.layers//4) == 0:
-                h = h.to('cuda:'+str(i//(self.layers//4)))
+            if i != 0 and i % (self.n_layers//4) == 0:
+                cuda='cuda:'+str(i//(self.n_layers//4))  
+                h = h.to(cuda)
+                freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen].to(cuda)
+                if mask is not None:
+                    mask = mask.to(cuda)
             h = layer(h, start_pos, freqs_cis, mask)
-            print(i, h.device)
         h = self.norm(h)
         #print("pre ",h.shape)
         #output = self.output(h[:, -1, :])  # only compute last logits
