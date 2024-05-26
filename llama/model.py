@@ -184,6 +184,7 @@ class Transformer(nn.Module):
         self.freqs_cis = precompute_freqs_cis(
             self.params.dim // self.params.n_heads, self.params.max_seq_len * 2
         )
+        self.split_size = 6
 
     @torch.inference_mode()
     def forward(self, tokens: torch.Tensor, start_pos: int):
@@ -192,12 +193,61 @@ class Transformer(nn.Module):
         self.freqs_cis = self.freqs_cis.to(h.device)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
+        freqs_cis_list = [ freqs_cis.to('cuda:'+str(i)) for i in range(4)]
         mask = None
+        mask_list = []
         #if seqlen > 1:
         if start_pos != -1:
             mask = torch.full((1, 1, seqlen, start_pos+seqlen), float("-inf"), device=tokens.device)
             mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
+            mask_list = [ mask.to('cuda:'+str(i)) for i in range(4)]
 
+        splits = iter(h.split(self.split_size, dim=0))
+        s_next = next(splits)
+
+        for i, layer in enumerate(self.layers):
+            if i != 0 and i % (self.n_layers//4) == 0:
+                cuda='cuda:'+str(i//(self.n_layers//4))  
+                h = h.to(cuda)
+            if i == 45:
+                break
+            gpu_index = i // (self.n_layers//4)
+            h = layer(h, start_pos, freqs_cis_list[gpu_index], mask_list[gpu_index])
+        s_prev = h
+        ret = []
+
+        for en, s_next in enumerate(splits):
+            #`print(en)
+            for i, layer in enumerate(self.layers):
+                if i < 45:
+                    continue
+                gpu_index = i // (self.n_layers//4)
+                s_prev = layer(s_prev, start_pos, freqs_cis_list[gpu_index], mask_list[gpu_index])
+            s_prev = self.norm(s_prev)
+            ret.append(self.output(s_prev)) 
+
+            h = s_next
+            for i, layer in enumerate(self.layers):
+                if i != 0 and i % (self.n_layers//4) == 0:
+                    cuda='cuda:'+str(i//(self.n_layers//4))  
+                    h = h.to(cuda)
+                if i == 45:
+                    break
+                gpu_index = i // (self.n_layers//4)
+                h = layer(h, start_pos, freqs_cis_list[gpu_index], mask_list[gpu_index])
+            s_prev = h
+
+        for i, layer in enumerate(self.layers):
+            if i < 45:
+                continue
+            gpu_index = i // (self.n_layers//4)
+            s_prev = layer(s_prev, start_pos, freqs_cis_list[gpu_index], mask_list[gpu_index])
+        s_prev = self.norm(s_prev)
+        ret.append(self.output(s_prev)) 
+        output = torch.cat(ret).float()
+        return output
+
+        """
         for i, layer in enumerate(self.layers):
             if i != 0 and i % (self.n_layers//4) == 0:
                 cuda='cuda:'+str(i//(self.n_layers//4))  
@@ -207,7 +257,6 @@ class Transformer(nn.Module):
                     mask = mask.to(cuda)
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
-        #print("pre ",h.shape)
-        #output = self.output(h[:, -1, :])  # only compute last logits
         output = self.output(h[:, :, :])  
         return output.float()
+        """
