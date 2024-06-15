@@ -7,7 +7,10 @@ import math
 
 import torch
 from torch import nn
+import torch.distributed as dist
 import torch.nn.functional as F
+import os
+import time
 
 @dataclass
 class ModelArgs:
@@ -158,6 +161,55 @@ class TransformerBlock(nn.Module):
         out = h + self.feed_forward.forward(self.ffn_norm(h))
         return out
 
+class CircularQueue:
+    def __init__(self, size):
+        self.size = size
+        self.queue = [None] * size
+        self.front = self.rear = -1
+
+    def is_full(self):
+        return (self.rear + 1) % self.size == self.front
+
+    def is_empty(self):
+        return self.front == -1
+
+    def enqueue(self, data):
+        if self.is_full():
+            print("Queue is full")
+            return
+
+        if self.front == -1:
+            self.front = 0
+
+        self.rear = (self.rear + 1) % self.size
+        self.queue[self.rear] = data
+
+    def dequeue(self):
+        if self.is_empty():
+            print("Queue is empty")
+            return None
+
+        data = self.queue[self.front]
+        self.queue[self.front] = None
+
+        if self.front == self.rear:
+            self.front = self.rear = -1
+        else:
+            self.front = (self.front + 1) % self.size
+
+        return data
+
+    def display(self):
+        if self.is_empty():
+            print("Queue is empty")
+            return
+
+        if self.rear >= self.front:
+            print("Queue:", ' '.join([str(self.queue[i]) for i in range(self.front, self.rear + 1)]))
+        else:
+            print("Queue:", ' '.join([str(self.queue[i]) for i in range(self.front, self.size)] + [str(self.queue[i]) for i in range(0, self.rear + 1)]))
+
+
 
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
@@ -165,98 +217,107 @@ class Transformer(nn.Module):
         self.params = params
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
-
-        self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim).to('cuda:0')
+        self.local_rank = int(os.environ.get("LOCAL_RANK", -1))
 
         self.layers = torch.nn.ModuleList()
-        for layer_id in range(params.n_layers//4):
-            self.layers.append(TransformerBlock(layer_id, params).to('cuda:0'))
-        for layer_id in range(params.n_layers//4, params.n_layers//4 * 2):
-            self.layers.append(TransformerBlock(layer_id, params).to('cuda:1'))
-        for layer_id in range(params.n_layers//4 * 2, params.n_layers//4 * 3):
-            self.layers.append(TransformerBlock(layer_id, params).to('cuda:2'))
-        for layer_id in range(params.n_layers//4 * 3, params.n_layers):
-            self.layers.append(TransformerBlock(layer_id, params).to('cuda:3'))
+        if self.local_rank == 0:
+            self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
 
-        self.norm = RMSNorm(params.dim, eps=params.norm_eps).to('cuda:3')
-        self.output = nn.Linear(params.dim, params.vocab_size, bias=False).to('cuda:3')
+        for layer_id in range(params.n_layers//4):
+            if self.local_rank == 0:
+                self.layers.append(TransformerBlock(layer_id, params))
+            else:
+                self.layers.append(nn.Identity())
+        for layer_id in range(params.n_layers//4, params.n_layers//4 * 2):
+            if self.local_rank == 1:
+                self.layers.append(TransformerBlock(layer_id, params))
+            else: 
+                self.layers.append(nn.Identity())
+        for layer_id in range(params.n_layers//4 * 2, params.n_layers//4 * 3):
+            if self.local_rank == 2:
+                self.layers.append(TransformerBlock(layer_id, params))
+            else: 
+                self.layers.append(nn.Identity())
+        for layer_id in range(params.n_layers//4 * 3, params.n_layers):
+            if self.local_rank == 3:
+                self.layers.append(TransformerBlock(layer_id, params))
+            else: 
+                self.layers.append(nn.Identity())
+
+        if self.local_rank == 3:
+            self.norm = RMSNorm(params.dim, eps=params.norm_eps)
+            self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
 
         self.freqs_cis = precompute_freqs_cis(
             self.params.dim // self.params.n_heads, self.params.max_seq_len * 2
         )
-        self.split_size = 6
+        self.tag = 0
+        self.total_wait = 0
+        self.tensor_ref = CircularQueue(100)
 
     @torch.inference_mode()
     def forward(self, tokens: torch.Tensor, start_pos: int):
-        _bsz, seqlen = tokens.shape
-        h = self.tok_embeddings(tokens)
-        self.freqs_cis = self.freqs_cis.to(h.device)
+        h = None
+        local_rank = self.local_rank
+        _bsz, seqlen = tokens.shape 
+        # Get tensor from previous GPU
+        tensor = None
+        if local_rank > 0:
+            #tensor = torch.zeros((_bsz, seqlen, self.params.dim), dtype=torch.cuda.HalfTensor).to(local_rank)
+            tensor = torch.zeros((_bsz, seqlen, self.params.dim), dtype=torch.float16, device=torch.device('cuda'))
+            req = dist.irecv(tensor=tensor, src=local_rank-1, tag=self.tag)
+            start = time.time()
+            req.wait()
+            self.total_wait = time.time() - start
+            #print(f'TOTAL_WAIT{local_rank}: {self.total_wait} sec in tag{self.tag} ')
+            print(f'TOTAL_WAIT{local_rank}: {self.total_wait} sec in tag{self.tag}, got{tensor[0,0,0]}')
+            if self.tag != tensor[0,0,0]:
+                print('NOT MATCH CODE: UGYEONG')
+            h = tensor
+            print(local_rank, tensor.shape)
+            print(f'{local_rank},    {seqlen}')
+        print(f'hey? {local_rank}')
+
+
+        if local_rank == 0:
+            h = self.tok_embeddings(tokens)
+
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
-        freqs_cis_list = [ freqs_cis.to('cuda:'+str(i)) for i in range(4)]
         mask = None
-        mask_list = []
-        #if seqlen > 1:
         if start_pos != -1:
-            mask = torch.full((1, 1, seqlen, start_pos+seqlen), float("-inf"), device=tokens.device)
-            mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
-            mask_list = [ mask.to('cuda:'+str(i)) for i in range(4)]
+            mask = torch.full((1, 1, seqlen, start_pos+seqlen), float("-inf"), device='cuda')
+            mask = torch.triu(mask, diagonal=start_pos + 1)
+            mask = mask.type_as(h if local_rank==0 else tensor)
 
-        splits = iter(h.split(self.split_size, dim=0))
-        s_next = next(splits)
-
+        # Process
         for i, layer in enumerate(self.layers):
-            if i != 0 and i % (self.n_layers//4) == 0:
-                cuda='cuda:'+str(i//(self.n_layers//4))  
-                h = h.to(cuda)
-            if i == 45:
-                break
-            gpu_index = i // (self.n_layers//4)
-            h = layer(h, start_pos, freqs_cis_list[gpu_index], mask_list[gpu_index])
-        s_prev = h
-        ret = []
-
-        for en, s_next in enumerate(splits):
-            #`print(en)
-            for i, layer in enumerate(self.layers):
-                if i < 45:
-                    continue
-                gpu_index = i // (self.n_layers//4)
-                s_prev = layer(s_prev, start_pos, freqs_cis_list[gpu_index], mask_list[gpu_index])
-            s_prev = self.norm(s_prev)
-            ret.append(self.output(s_prev)) 
-
-            h = s_next
-            for i, layer in enumerate(self.layers):
-                if i != 0 and i % (self.n_layers//4) == 0:
-                    cuda='cuda:'+str(i//(self.n_layers//4))  
-                    h = h.to(cuda)
-                if i == 45:
-                    break
-                gpu_index = i // (self.n_layers//4)
-                h = layer(h, start_pos, freqs_cis_list[gpu_index], mask_list[gpu_index])
-            s_prev = h
-
-        for i, layer in enumerate(self.layers):
-            if i < 45:
+            if i < local_rank*15:
                 continue
-            gpu_index = i // (self.n_layers//4)
-            s_prev = layer(s_prev, start_pos, freqs_cis_list[gpu_index], mask_list[gpu_index])
-        s_prev = self.norm(s_prev)
-        ret.append(self.output(s_prev)) 
-        output = torch.cat(ret).float()
-        return output
+            if i >= (local_rank+1)*15:
+                break
 
-        """
-        for i, layer in enumerate(self.layers):
-            if i != 0 and i % (self.n_layers//4) == 0:
-                cuda='cuda:'+str(i//(self.n_layers//4))  
-                h = h.to(cuda)
-                freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen].to(cuda)
-                if mask is not None:
-                    mask = mask.to(cuda)
             h = layer(h, start_pos, freqs_cis, mask)
-        h = self.norm(h)
-        output = self.output(h[:, :, :])  
-        return output.float()
-        """
+
+
+        # Send
+        if local_rank in [0,1,2]:
+            tensor = h
+            '''
+            if self.tensor_ref.is_full():
+                self.tensor_ref.dequeue()
+            self.tensor_ref.enqueue(tensor)
+            '''
+            #req = dist.isend(tensor=tensor, dst=local_rank+1)
+            print(local_rank, tensor.shape)
+            tensor[0,0,0] = self.tag
+            req = dist.isend(tensor=tensor, dst=local_rank+1, tag=self.tag)
+            self.tag += 1
+            return None
+        elif local_rank == 3:
+            h = self.norm(h)
+            output = self.output(h[:, :, :])  
+            self.tag += 1
+            return output.float()
+        else:
+            raise Exception('not allowed local_rank')

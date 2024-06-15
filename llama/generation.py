@@ -11,6 +11,7 @@ from llama.model import Transformer
 
 from torch.profiler import record_function
 
+import os
 
 class LLaMA:
     ii=0
@@ -18,6 +19,7 @@ class LLaMA:
     def __init__(self, model: Transformer):#, tokenizer: Tokenizer):
         self.model = model
         #self.tokenizer = tokenizer
+        self.local_rank = int(os.environ.get("LOCAL_RANK", -1))
 
     def generate(
         self,
@@ -44,19 +46,26 @@ class LLaMA:
 
         total_len = min(params.max_seq_len, max_gen_len + max_prompt_size)
 
-        result_prob = torch.zeros(len(prompt_tokens)).to('cuda:3')
-        tokens_with_answer = torch.full((bsz, total_len), 0).to('cuda:0').long()
+        result_prob = None
+        tokens_with_answer = torch.zeros(1,1)
         max_tokens_with_answer = 0
+
+        result_prob = torch.zeros(len(prompt_tokens)).to('cuda')
+        tokens_with_answer = torch.full((bsz, total_len), 0).to('cuda').long()
         for k, t in enumerate(expanded_tokens):
             tokens_with_answer[k, : len(t)] = torch.tensor(t).long()
             if max_tokens_with_answer < len(t):
                 max_tokens_with_answer = len(t)
 
+        print(f'{self.local_rank} im here2')
         #logits = self.model.forward(tokens_with_answer[:, :max_tokens_with_answer], 0)
         if LLaMA.ii % 4 == 0:
             logits = self.model.forward(tokens_with_answer[:, :max_tokens_with_answer], 0)
         else:
             logits = self.model.forward(tokens_with_answer[:, min_prompt_size:max_tokens_with_answer], min_prompt_size)
+        if self.local_rank in [0,1,2]:
+            LLaMA.ii = LLaMA.ii + 1
+            return None
 
         probs = F.log_softmax(logits / temperature, dim=-1)
         if LLaMA.ii % 4 == 0:
