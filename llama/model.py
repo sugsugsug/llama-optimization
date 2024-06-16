@@ -253,7 +253,8 @@ class Transformer(nn.Module):
         )
         self.tag = 0
         self.total_wait = 0
-        self.tensor_ref = CircularQueue(100)
+        #self.tensor_ref = CircularQueue(100)
+        self.tensor_ref = []
 
     @torch.inference_mode()
     def forward(self, tokens: torch.Tensor, start_pos: int):
@@ -269,14 +270,14 @@ class Transformer(nn.Module):
             start = time.time()
             req.wait()
             self.total_wait = time.time() - start
-            #print(f'TOTAL_WAIT{local_rank}: {self.total_wait} sec in tag{self.tag} ')
+            print(f'TOTAL_WAIT{local_rank}: {self.total_wait} sec in tag{self.tag} ')
+            '''
             print(f'TOTAL_WAIT{local_rank}: {self.total_wait} sec in tag{self.tag}, got{tensor[0,0,0]}')
             if self.tag != tensor[0,0,0]:
                 print('NOT MATCH CODE: UGYEONG')
+            '''
             h = tensor
             print(local_rank, tensor.shape)
-            print(f'{local_rank},    {seqlen}')
-        print(f'hey? {local_rank}')
 
 
         if local_rank == 0:
@@ -303,15 +304,9 @@ class Transformer(nn.Module):
         # Send
         if local_rank in [0,1,2]:
             tensor = h
-            '''
-            if self.tensor_ref.is_full():
-                self.tensor_ref.dequeue()
-            self.tensor_ref.enqueue(tensor)
-            '''
-            #req = dist.isend(tensor=tensor, dst=local_rank+1)
             print(local_rank, tensor.shape)
-            tensor[0,0,0] = self.tag
             req = dist.isend(tensor=tensor, dst=local_rank+1, tag=self.tag)
+
             self.tag += 1
             return None
         elif local_rank == 3:

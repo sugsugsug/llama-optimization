@@ -20,6 +20,8 @@ from torch.profiler import profile, record_function, ProfilerActivity
 
 from sentence_transformers import SentenceTransformer, util
 import time
+import torch.distributed as dist
+
 start_time = time.time()
 sentences = ["I'm happy", "I'm full of happiness"]
 
@@ -58,7 +60,7 @@ answer_chr_nums = []
 tokenizer_path = './tokenizer.model'
 tokenizer = Tokenizer(model_path=tokenizer_path)
 
-num_sample = 96
+num_sample = 9996
 #num_sample = 120
 num_skip_sample = 0
 
@@ -100,7 +102,7 @@ def init_input():
                 #sort_tuples.append((num_token_sen + num_token(new_ans_list[j]),real_i,j))
                 sort_tuples.append((num_token_sen ,real_i,sorted_answer_index_list[j]))
             real_i = real_i + 1
-            print(str(i)+'th input processing..')
+            #print(str(i)+'th input processing..')
 
     new_tuples = sorted(sort_tuples, key=lambda tup: tup[0])
     return new_tuples
@@ -214,10 +216,12 @@ def main(
             question_for_gen.append(question)
             answer_for_gen.append(answer)
             num_chr_list.append(ans_num_chr)
-        print(f'{local_rank} im here')
+        #print(f'{local_rank} im here')
         gen_small = generator.generate(
             question_for_gen, answer_for_gen, max_gen_len=256, temperature=temperature, top_p=top_p 
         )
+        if i == num_batch-1:
+            dist.barrier()
         if local_rank in [0,1,2]:
             continue
         #prof.step()

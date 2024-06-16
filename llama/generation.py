@@ -65,7 +65,7 @@ class LLaMA:
             logits = self.model.forward(tokens_with_answer[:, min_prompt_size:max_tokens_with_answer], min_prompt_size)
         if self.local_rank in [0,1,2]:
             LLaMA.ii = LLaMA.ii + 1
-            return None
+            return None 
 
         probs = F.log_softmax(logits / temperature, dim=-1)
         if LLaMA.ii % 4 == 0:
