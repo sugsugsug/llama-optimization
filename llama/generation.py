@@ -50,15 +50,16 @@ class LLaMA:
         tokens_with_answer = torch.zeros(1,1)
         max_tokens_with_answer = 0
 
-        result_prob = torch.zeros(len(prompt_tokens)).to('cuda')
+        result_prob = torch.zeros(len(prompt_tokens), device='cuda')
         tokens_with_answer = torch.full((bsz, total_len), 0).to('cuda').long()
         for k, t in enumerate(expanded_tokens):
             tokens_with_answer[k, : len(t)] = torch.tensor(t).long()
             if max_tokens_with_answer < len(t):
                 max_tokens_with_answer = len(t)
 
-        print(f'{self.local_rank} im here2')
+        #print(f'{self.local_rank} im here2')
         #logits = self.model.forward(tokens_with_answer[:, :max_tokens_with_answer], 0)
+        #with record_function('model_inference'):
         if LLaMA.ii % 4 == 0:
             logits = self.model.forward(tokens_with_answer[:, :max_tokens_with_answer], 0)
         else:
@@ -70,14 +71,17 @@ class LLaMA:
         probs = F.log_softmax(logits / temperature, dim=-1)
         if LLaMA.ii % 4 == 0:
             LLaMA.cache_tensor = torch.cat([probs[i:(i+1),len(prompt_tokens[i])-1:len(prompt_tokens[i]),:] for i in range(len(expanded_tokens))],dim=0)
+        # make answer tokens be in gpu
+        answer_tokens = [ torch.tensor(answer_token, device='cuda') for answer_token in answer_tokens]
         for i in range(len(expanded_tokens)):
             probs_for_token = probs[i,:,:]
             #mask = torch.arange(len(prompt_tokens[i])-1,len(expanded_tokens[i])-1)
             if LLaMA.ii % 4 == 0:
-                mask = torch.arange(len(prompt_tokens[i])-1,len(expanded_tokens[i])-1)
+                mask = torch.arange(len(prompt_tokens[i])-1,len(expanded_tokens[i])-1,device='cuda')
             else:
                 diff = len(prompt_tokens[i]) - min_prompt_size
-                mask = torch.arange(diff, diff+len(answer_tokens[i]))
+                mask = torch.arange(diff, diff+len(answer_tokens[i]),device='cuda')
+                #print(f'probs_for_token{probs_for_token.device}, cache{LLaMA.cache_tensor.device}')
                 probs_for_token = torch.cat((LLaMA.cache_tensor[i,:,:],probs_for_token[:-1,:]),dim=0)
             result_prob[i] = probs_for_token[mask,answer_tokens[i]].sum()
         LLaMA.ii = LLaMA.ii + 1

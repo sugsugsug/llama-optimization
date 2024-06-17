@@ -22,7 +22,8 @@ class ModelArgs:
     norm_eps: float = 1e-5
 
     max_batch_size: int = 32
-    max_seq_len: int = 2048
+    #max_seq_len: int = 2048
+    max_seq_len: int = 200
 
 
 class RMSNorm(torch.nn.Module):
@@ -210,6 +211,16 @@ class CircularQueue:
             print("Queue:", ' '.join([str(self.queue[i]) for i in range(self.front, self.size)] + [str(self.queue[i]) for i in range(0, self.rear + 1)]))
 
 
+def get_stacked_tensor_with_padding(tensor_list, max_seq_len):
+    max_size = max([ tensor.size(1) for tensor in tensor_list ])
+    padded_tensor_list = []
+    for tensor in tensor_list:
+        pad_size = max_seq_len - tensor.size(1)
+        padding = (0, 0, 0, pad_size)  # (left, right, top, bottom) for 2D
+        padded_tensor_list.append(torch.nn.functional.pad(tensor, padding))
+    return torch.stack(padded_tensor_list)
+
+
 
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
@@ -254,7 +265,12 @@ class Transformer(nn.Module):
         self.tag = 0
         self.total_wait = 0
         #self.tensor_ref = CircularQueue(100)
-        self.tensor_ref = []
+        #self.tensor_ref = []
+        self.tensor_buffer_received = []
+        self.tensor_buffer_index = 0
+        self.tensor_buffer_size = 1
+        self.tensor_buffer_to_send = []
+        
 
     @torch.inference_mode()
     def forward(self, tokens: torch.Tensor, start_pos: int):
@@ -264,20 +280,24 @@ class Transformer(nn.Module):
         # Get tensor from previous GPU
         tensor = None
         if local_rank > 0:
-            #tensor = torch.zeros((_bsz, seqlen, self.params.dim), dtype=torch.cuda.HalfTensor).to(local_rank)
-            tensor = torch.zeros((_bsz, seqlen, self.params.dim), dtype=torch.float16, device=torch.device('cuda'))
-            req = dist.irecv(tensor=tensor, src=local_rank-1, tag=self.tag)
-            start = time.time()
-            req.wait()
-            self.total_wait = time.time() - start
-            print(f'TOTAL_WAIT{local_rank}: {self.total_wait} sec in tag{self.tag} ')
-            '''
-            print(f'TOTAL_WAIT{local_rank}: {self.total_wait} sec in tag{self.tag}, got{tensor[0,0,0]}')
-            if self.tag != tensor[0,0,0]:
-                print('NOT MATCH CODE: UGYEONG')
-            '''
-            h = tensor
-            print(local_rank, tensor.shape)
+            #tensor = torch.zeros((_bsz, seqlen, self.params.dim), dtype=torch.float16, device=torch.device('cuda'))
+            if self.tag % self.tensor_buffer_size == 0:
+                tensor = torch.zeros((self.tensor_buffer_size, _bsz, self.params.max_seq_len, self.params.dim), dtype=torch.float16, device=torch.device('cuda'))
+                req = dist.irecv(tensor=tensor, src=local_rank-1, tag=(self.tag//self.tensor_buffer_size))
+                self.tensor_buffer_received = list(torch.unbind(tensor, dim=0))
+                start = time.time()
+                req.wait()
+                self.total_wait = time.time() - start
+                print(f'TOTAL_WAIT{local_rank}: {self.total_wait} sec in tag{self.tag} ')
+                '''
+                print(f'TOTAL_WAIT{local_rank}: {self.total_wait} sec in tag{self.tag}, got{tensor[0,0,0]}')
+                if self.tag != tensor[0,0,0]:
+                    print('NOT MATCH CODE: UGYEONG')
+                '''
+            #h = tensor
+            h = self.tensor_buffer_received[self.tag % self.tensor_buffer_size]
+            h = h[:,:seqlen,:]
+            #print(local_rank, h.shape)
 
 
         if local_rank == 0:
@@ -289,7 +309,7 @@ class Transformer(nn.Module):
         if start_pos != -1:
             mask = torch.full((1, 1, seqlen, start_pos+seqlen), float("-inf"), device='cuda')
             mask = torch.triu(mask, diagonal=start_pos + 1)
-            mask = mask.type_as(h if local_rank==0 else tensor)
+            mask = mask.type_as(h)
 
         # Process
         for i, layer in enumerate(self.layers):
@@ -304,14 +324,17 @@ class Transformer(nn.Module):
         # Send
         if local_rank in [0,1,2]:
             tensor = h
-            print(local_rank, tensor.shape)
-            req = dist.isend(tensor=tensor, dst=local_rank+1, tag=self.tag)
+            #print(local_rank, tensor.shape)
+            self.tensor_buffer_to_send.append(tensor)
+            if self.tag % self.tensor_buffer_size == self.tensor_buffer_size-1:
+                req = dist.isend(tensor=get_stacked_tensor_with_padding(self.tensor_buffer_to_send, self.params.max_seq_len), dst=local_rank+1, tag=(self.tag//self.tensor_buffer_size))
+                self.tensor_buffer_to_send = []
 
             self.tag += 1
             return None
         elif local_rank == 3:
             h = self.norm(h)
-            output = self.output(h[:, :, :])  
+            output = self.output(h)  
             self.tag += 1
             return output.float()
         else:

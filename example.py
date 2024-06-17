@@ -60,7 +60,8 @@ answer_chr_nums = []
 tokenizer_path = './tokenizer.model'
 tokenizer = Tokenizer(model_path=tokenizer_path)
 
-num_sample = 9996
+num_sample = 12* 832
+#num_sample = 12 * 16
 #num_sample = 120
 num_skip_sample = 0
 
@@ -164,7 +165,7 @@ def main(
     tokenizer_path: str,
     temperature: float = 0.8,
     top_p: float = 0.95,
-    max_seq_len: int = 512,
+    max_seq_len: int = 200,
     max_batch_size: int = 12,# 32
 ):
     #global question_lines, answer_lines, answer_indexes, answer_chr_nums, tokenizer_path, tokenizer
@@ -185,10 +186,11 @@ def main(
     num_batch = math.floor(len(question_lines)*4 / max_batch_size)
     result_values = torch.empty((10000, 4), dtype=torch.float32)
     print("HI",num_batch)
+
     '''
     prof = torch.profiler.profile(
-        schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
-        on_trace_ready=torch.profiler.tensorboard_trace_handler('./log/pipeline_model_parallel2'),
+        schedule=torch.profiler.schedule(wait=1, warmup=1, active=5, repeat=2),
+        on_trace_ready=torch.profiler.tensorboard_trace_handler('/home/s4/ugyeong/playground/llama-optimization/log/1_batch_go'),
         record_shapes=True,
         profile_memory=True,
         with_stack=True)
@@ -220,25 +222,25 @@ def main(
         gen_small = generator.generate(
             question_for_gen, answer_for_gen, max_gen_len=256, temperature=temperature, top_p=top_p 
         )
+        #prof.step()
         if i == num_batch-1:
             dist.barrier()
         if local_rank in [0,1,2]:
             continue
-        #prof.step()
         #print('chr_list : ', num_chr_list)
 
         #print(gen_small)
-        result_small = gen_small.div(torch.tensor(num_chr_list).to('cuda:3'))
+        result_small = gen_small.div(torch.tensor(num_chr_list,device='cuda'))
         for j in range(max_batch_size):
             #a = i*max_batch_size+j
             a = (i//4)*max_batch_size*4 + (i%4)+j*4
             result_values[new_tuples[a][1],new_tuples[a][2]] = result_small[j]
         print(str(i)+'th batch processing.. in ' +str(local_rank))
 
+    #prof.stop()
     if local_rank in [0,1,2]:
         print(str(local_rank)+'th worker fin')
         return 0
-    #prof.stop()
     #print(prof.key_averages(group_by_input_shape=True).table(sort_by="cpu_time_total", row_limit=10))
     results = torch.argmax(result_values[:num_sample,:],dim=1).tolist()
     print(results)
